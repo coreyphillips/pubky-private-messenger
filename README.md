@@ -2,6 +2,18 @@
 
 An end-to-end encrypted messaging application built on the Pubky protocol.
 
+## 📸 Screenshots
+
+<div align="center">
+
+### Login Screen
+![Login Screen](./images/login-screen.png)
+
+### Chat Interface
+![Chat Interface](./images/chat-interface.png)
+
+</div>
+
 ## ✨ Key Features
 
 - **🔒 End-to-End Encryption** - Only conversation participants can read messages
@@ -77,27 +89,32 @@ yarn tauri build
 
 ### 1. Sign In
 
-- **Recovery File**: Select your `.pkarr` recovery file
+![Login Screen](./images/login-screen.png)
+
+- **Recovery File**: Select your `.pkarr` recovery file (like `vanity-core...4-15.pkarr`)
 - **Passphrase**: Enter your decryption passphrase
 - Click **Sign In** to authenticate with your keypair
 
 ### 2. Add Contacts
 
+![Chat Interface](./images/chat-interface.png)
+
 - Copy a contact's public key (starts with their pubky address)
-- Paste into the "Enter public key" field
+- Paste into the "Enter public key" field in the left sidebar
 - Click **Add** to start a conversation
 
 ### 3. Send Messages
 
-- Select a contact from the sidebar
-- Type your message in the input field
+- Select a contact from the sidebar (they'll appear highlighted in blue)
+- Type your message in the input field at the bottom
 - Press **Enter** or click **Send**
 - Messages are encrypted and stored on both homeservers
+- ✅ Green checkmarks indicate verified messages
 
 ### 4. Manage Contacts
 
-- **Edit Names**: Click the ✏️ icon next to any contact
-- **Remove Contacts**: Click the × button to delete
+- **Edit Names**: Click the ✏️ icon next to any contact to set a custom name
+- **Remove Contacts**: Click the × button to delete a contact
 - **View History**: All messages are cached locally for quick access
 
 ## 🔧 Technical Details
