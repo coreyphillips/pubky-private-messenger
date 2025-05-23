@@ -1,0 +1,374 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    height: 100vh;
+    overflow: hidden;
+}
+
+.screen {
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Login Screen */
+.login-container {
+    background: white;
+    padding: 2rem;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    width: 400px;
+}
+
+.login-container h1 {
+    text-align: center;
+    margin-bottom: 2rem;
+    color: #333;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: #555;
+    font-weight: 500;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 0.75rem;
+    border: 2px solid #ddd;
+    border-radius: 5px;
+    font-size: 1rem;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.btn-primary {
+    width: 100%;
+    padding: 0.75rem;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-top: 1rem;
+}
+
+.btn-primary:hover {
+    background: #5a6fd8;
+}
+
+.btn-secondary {
+    padding: 0.5rem 1rem;
+    background: #6c757d;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.btn-secondary:hover {
+    background: #5a6268;
+}
+
+.error-message {
+    color: #dc3545;
+    margin-top: 1rem;
+    padding: 0.5rem;
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 5px;
+    display: none;
+}
+
+/* Chat Screen */
+.chat-container {
+    height: 100vh;
+    background: white;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-header {
+    background: #343a40;
+    color: white;
+    padding: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.chat-main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+.contacts-sidebar {
+    width: 300px;
+    background: #f8f9fa;
+    border-right: 1px solid #dee2e6;
+    display: flex;
+    flex-direction: column;
+}
+
+.contacts-sidebar h3 {
+    padding: 1rem;
+    background: #e9ecef;
+    margin: 0;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.add-contact {
+    padding: 1rem;
+    display: flex;
+    gap: 0.5rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.add-contact input {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+}
+
+.add-contact button {
+    padding: 0.5rem 1rem;
+    background: #28a745;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.contact-item {
+    padding: 1rem;
+    border-bottom: 1px solid #dee2e6;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: relative;
+}
+
+.contact-item:hover {
+    background: #e9ecef;
+}
+
+.contact-item.active {
+    background: #007bff;
+    color: white;
+}
+
+.contact-info {
+    flex: 1;
+    min-width: 0; /* Allows text to truncate properly */
+}
+
+.contact-name-row {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+    margin-bottom: 0.25rem;
+}
+
+.contact-name {
+    font-weight: 500;
+}
+
+.contact-edit-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.1rem 0.2rem;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+    font-size: 0.7rem;
+    opacity: 0.4;
+    line-height: 1;
+    margin-left: 0.1rem;
+}
+
+.contact-edit-btn:hover {
+    background: rgba(0, 123, 255, 0.1);
+    opacity: 1;
+}
+
+.contact-item.active .contact-edit-btn {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.contact-item.active .contact-edit-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    opacity: 1;
+}
+
+.contact-last-message {
+    font-size: 0.875rem;
+    color: #6c757d;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.contact-item.active .contact-last-message {
+    color: rgba(255,255,255,0.8);
+}
+
+.contact-delete-btn {
+    background: none;
+    border: none;
+    color: #dc3545;
+    font-size: 1.1rem;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+    margin-left: 0.5rem;
+    min-width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.contact-delete-btn:hover {
+    background: rgba(220, 53, 69, 0.1);
+}
+
+.contact-item.active .contact-delete-btn {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.contact-item.active .contact-delete-btn:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.contact-name-input {
+    font-family: inherit !important;
+    margin-bottom: 0.25rem;
+}
+
+.chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-header-conversation {
+    padding: 1rem;
+    background: #e9ecef;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.chat-header-conversation h3 {
+    margin: 0;
+    color: #495057;
+}
+
+.messages-container {
+    flex: 1;
+    padding: 1rem;
+    overflow-y: auto;
+    background: #f8f9fa;
+}
+
+.message {
+    margin-bottom: 1rem;
+    max-width: 70%;
+}
+
+.message.own {
+    margin-left: auto;
+}
+
+.message.other {
+    margin-right: auto;
+}
+
+.message-content {
+    padding: 0.75rem;
+    border-radius: 10px;
+    word-wrap: break-word;
+}
+
+.message.own .message-content {
+    background: #007bff;
+    color: white;
+}
+
+.message.other .message-content {
+    background: white;
+    border: 1px solid #dee2e6;
+}
+
+.message-meta {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: #6c757d;
+}
+
+.message.own .message-meta {
+    justify-content: flex-end;
+}
+
+.message-input-container {
+    padding: 1rem;
+    background: white;
+    border-top: 1px solid #dee2e6;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.message-input-container input {
+    flex: 1;
+    padding: 0.75rem;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+
+.message-input-container button {
+    padding: 0.75rem 1.5rem;
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.message-input-container button:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+}

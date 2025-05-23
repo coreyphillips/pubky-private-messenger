@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pubky Private Messenger</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <!-- Login Screen -->
+  <div id="login-screen" class="screen">
+    <div class="login-container">
+      <h1>🔐 Pubky Private Messenger</h1>
+      <div class="form-group">
+        <label for="recovery-file">Recovery File:</label>
+        <input type="file" id="recovery-file" accept=".pkarr">
+      </div>
+      <div class="form-group">
+        <label for="passphrase">Passphrase:</label>
+        <input type="password" id="passphrase" placeholder="Enter your passphrase">
+      </div>
+      <button id="sign-in-btn" class="btn-primary">Sign In</button>
+      <div id="login-error" class="error-message"></div>
+    </div>
+  </div>
+
+  <!-- Chat Screen -->
+  <div id="chat-screen" class="screen hidden">
+    <div class="chat-container">
+      <!-- Header -->
+      <div class="chat-header">
+        <div class="user-info">
+          <span id="user-pubkey"></span>
+          <button id="sign-out-btn" class="btn-secondary">Sign Out</button>
+        </div>
+      </div>
+
+      <!-- Main Chat Area -->
+      <div class="chat-main">
+        <!-- Contacts Sidebar -->
+        <div class="contacts-sidebar">
+          <h3>Contacts</h3>
+          <div class="add-contact">
+            <input type="text" id="new-contact" placeholder="Enter public key">
+            <button id="add-contact-btn">Add</button>
+          </div>
+          <div id="contacts-list"></div>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="chat-area">
+          <div class="chat-header-conversation">
+            <h3 id="conversation-title">Select a contact to start chatting</h3>
+          </div>
+          <div id="messages-container" class="messages-container"></div>
+          <div class="message-input-container">
+            <input type="text" id="message-input" placeholder="Type a message..." disabled>
+            <button id="send-btn" disabled>Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="main.js"></script>
+</body>
+</html>
