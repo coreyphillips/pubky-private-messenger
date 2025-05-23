@@ -1,6 +1,8 @@
 # 🔐 Pubky Private Messenger
 
-An end-to-end encrypted messaging application built on the Pubky protocol.
+### An end-to-end encrypted messaging application built on the Pubky protocol.
+
+## Disclaimer: This project was created in an evening to test the capabilities of Claude Sonnet 4 out of curiosity. Please use at your own risk.
 
 ## 📸 Screenshots
 
