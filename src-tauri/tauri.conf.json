@@ -28,6 +28,10 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "Developer ID Application: Ferryman Fin LLC (344W3TSQCK)",
+      "providerShortName": "344W3TSQCK"
+    }
   }
 }
