@@ -5,14 +5,28 @@ const { invoke } = window.__TAURI__.core;
 let currentUser = null;
 let currentContact = null;
 let contacts = new Map();
+let isEditingContactName = false; // Track when editing contact names
+let userSettings = null; // User settings
+
+// Session persistence key
+const SESSION_STORAGE_KEY = 'pubky_session';
+
+// Default settings
+const DEFAULT_SETTINGS = {
+  pollingEnabled: true,
+  pollingInterval: 5000, // 5 seconds
+};
 
 // DOM elements
 const loginScreen = document.getElementById('login-screen');
 const chatScreen = document.getElementById('chat-screen');
+const settingsPanel = document.getElementById('settings-panel');
 const recoveryFileInput = document.getElementById('recovery-file');
 const passphraseInput = document.getElementById('passphrase');
 const signInBtn = document.getElementById('sign-in-btn');
 const signOutBtn = document.getElementById('sign-out-btn');
+const settingsBtn = document.getElementById('settings-btn');
+const closeSettingsBtn = document.getElementById('close-settings-btn');
 const userPubkeySpan = document.getElementById('user-pubkey');
 const loginError = document.getElementById('login-error');
 const newContactInput = document.getElementById('new-contact');
@@ -23,6 +37,11 @@ const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
 const conversationTitle = document.getElementById('conversation-title');
 
+// Settings elements
+const pollingEnabledToggle = document.getElementById('polling-enabled');
+const pollingIntervalSelect = document.getElementById('polling-interval');
+const saveSettingsBtn = document.getElementById('save-settings-btn');
+
 // Initialize app
 async function init() {
   try {
@@ -30,7 +49,26 @@ async function init() {
     await invoke('init_client');
     console.log('Client initialized');
 
-    // Check if user is already signed in
+    // Check for existing session first
+    const savedSession = getSavedSession();
+    if (savedSession) {
+      console.log('🔄 Found saved session, attempting auto-login...');
+      try {
+        const profile = await invoke('restore_session', {
+          encryptedKeypair: savedSession
+        });
+        if (profile) {
+          console.log('✅ Auto-login successful');
+          showChatScreen(profile);
+          return;
+        }
+      } catch (error) {
+        console.log('❌ Auto-login failed, clearing saved session:', error);
+        clearSavedSession();
+      }
+    }
+
+    // Check if user is already signed in (fallback)
     const profile = await invoke('get_user_profile');
     if (profile) {
       showChatScreen(profile);
@@ -38,6 +76,119 @@ async function init() {
   } catch (error) {
     console.error('Failed to initialize:', error);
     showError('Failed to initialize application');
+  }
+}
+
+// Settings management
+function getSettingsKey() {
+  return currentUser ? `settings_${currentUser.public_key}` : null;
+}
+
+function loadSettings() {
+  const settingsKey = getSettingsKey();
+  if (!settingsKey) {
+    userSettings = { ...DEFAULT_SETTINGS };
+    return;
+  }
+
+  try {
+    const saved = localStorage.getItem(settingsKey);
+    if (saved) {
+      userSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+      console.log(`⚙️ Loaded settings for user ${currentUser.public_key.substring(0, 8)}`);
+    } else {
+      userSettings = { ...DEFAULT_SETTINGS };
+      console.log(`⚙️ Using default settings for user ${currentUser.public_key.substring(0, 8)}`);
+    }
+  } catch (error) {
+    console.error('Failed to load settings:', error);
+    userSettings = { ...DEFAULT_SETTINGS };
+  }
+}
+
+function saveSettings() {
+  const settingsKey = getSettingsKey();
+  if (!settingsKey || !userSettings) return;
+
+  try {
+    localStorage.setItem(settingsKey, JSON.stringify(userSettings));
+    console.log(`💾 Saved settings for user ${currentUser.public_key.substring(0, 8)}`);
+  } catch (error) {
+    console.error('Failed to save settings:', error);
+  }
+}
+
+function showSettings() {
+  // Load current settings into UI
+  pollingEnabledToggle.checked = userSettings.pollingEnabled;
+  pollingIntervalSelect.value = userSettings.pollingInterval.toString();
+
+  // Show settings panel
+  settingsPanel.classList.remove('hidden');
+}
+
+function closeSettings() {
+  settingsPanel.classList.add('hidden');
+}
+
+function applySettings() {
+  // Get values from UI
+  const pollingEnabled = pollingEnabledToggle.checked;
+  const pollingInterval = parseInt(pollingIntervalSelect.value);
+
+  // Update settings
+  const oldPollingEnabled = userSettings.pollingEnabled;
+  const oldPollingInterval = userSettings.pollingInterval;
+
+  userSettings.pollingEnabled = pollingEnabled;
+  userSettings.pollingInterval = pollingInterval;
+
+  // Save settings
+  saveSettings();
+
+  // Apply polling changes
+  if (oldPollingEnabled !== pollingEnabled || oldPollingInterval !== pollingInterval) {
+    console.log(`⚙️ Polling settings changed: enabled=${pollingEnabled}, interval=${pollingInterval}ms`);
+
+    // Restart polling with new settings
+    stopMessagePolling();
+    if (pollingEnabled) {
+      startMessagePolling();
+    }
+  }
+
+  // Close settings panel
+  closeSettings();
+
+  // Show feedback
+  console.log('✅ Settings saved and applied');
+}
+
+// Session persistence functions
+function saveSession(encryptedKeypair) {
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, encryptedKeypair);
+    console.log('💾 Session saved');
+  } catch (error) {
+    console.error('Failed to save session:', error);
+  }
+}
+
+function getSavedSession() {
+  try {
+    return localStorage.getItem(SESSION_STORAGE_KEY);
+  } catch (error) {
+    console.error('Failed to get saved session:', error);
+    return null;
+  }
+}
+
+function clearSavedSession() {
+  try {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    console.log('🗑️ Session cleared');
+  } catch (error) {
+    console.error('Failed to clear session:', error);
   }
 }
 
@@ -70,13 +221,19 @@ async function signIn() {
     const recoveryFileB64 = await fileToBase64(file);
 
     console.log('Calling sign_in_with_recovery...');
-    const profile = await invoke('sign_in_with_recovery', {
+    const result = await invoke('sign_in_with_recovery', {
       recoveryFileB64,
       passphrase
     });
 
-    console.log('Sign in successful:', profile);
-    showChatScreen(profile);
+    console.log('Sign in successful:', result.profile);
+
+    // Save the encrypted keypair for future sessions
+    if (result.encrypted_keypair) {
+      saveSession(result.encrypted_keypair);
+    }
+
+    showChatScreen(result.profile);
     clearError();
   } catch (error) {
     console.error('Sign in error:', error);
@@ -93,11 +250,16 @@ function showChatScreen(profile) {
 
   console.log(`🔐 Signed in as: ${profile.public_key.substring(0, 8)}`);
 
+  // Load user settings
+  loadSettings();
+
   // Load contacts specific to this pubky account
   loadContacts();
 
-  // Start polling for new messages
-  startMessagePolling();
+  // Start polling for new messages (if enabled in settings)
+  if (userSettings.pollingEnabled) {
+    startMessagePolling();
+  }
 }
 
 // Sign out
@@ -105,25 +267,30 @@ async function signOut() {
   try {
     await invoke('sign_out');
 
+    // Clear saved session
+    clearSavedSession();
+
     // Clear application state
     currentUser = null;
     currentContact = null;
-    contacts.clear(); // Clear contacts from memory
+    contacts.clear();
+    userSettings = null;
 
     // Clear caches
-    clearMessageCaches(); // Clear message caches for this user
+    clearMessageCaches();
 
     // Clear UI
     chatScreen.classList.add('hidden');
+    settingsPanel.classList.add('hidden'); // Also hide settings if open
     loginScreen.classList.remove('hidden');
-    contactsList.innerHTML = ''; // Clear contacts display
-    messagesContainer.innerHTML = ''; // Clear messages display
+    contactsList.innerHTML = '';
+    messagesContainer.innerHTML = '';
     conversationTitle.textContent = 'Select a contact to start chatting';
     messageInput.disabled = true;
     sendBtn.disabled = true;
 
     stopMessagePolling();
-    console.log('🚪 Signed out and cleared all data including message caches');
+    console.log('🚪 Signed out and cleared all data including saved session');
   } catch (error) {
     console.error('Sign out error:', error);
   }
@@ -144,12 +311,17 @@ function addContact() {
     public_key: pubkey,
     name: null,
     last_message: null,
-    last_message_time: null
+    last_message_time: null,
+    last_read_time: 0, // Track when messages were last read
+    unread_count: 0    // Track unread message count
   });
 
   saveContacts();
   renderContacts();
   newContactInput.value = '';
+
+  // Check for messages immediately after adding contact
+  setTimeout(() => updateContactUnreadCount(pubkey), 1000);
 
   console.log(`➕ Added contact ${pubkey.substring(0, 8)} to account ${currentUser.public_key.substring(0, 8)}`);
 }
@@ -183,6 +355,9 @@ function editContactName(pubkey, nameElement) {
   const originalName = contact.name || '';
   const currentDisplayName = nameElement.textContent;
 
+  // Set editing flag to prevent polling interference
+  isEditingContactName = true;
+
   // Create input element
   const input = document.createElement('input');
   input.type = 'text';
@@ -215,6 +390,9 @@ function editContactName(pubkey, nameElement) {
     }
 
     saveContacts();
+
+    // Clear editing flag before re-rendering
+    isEditingContactName = false;
     renderContacts();
 
     // Update conversation title if this is the current contact
@@ -227,6 +405,7 @@ function editContactName(pubkey, nameElement) {
   function cancelEdit() {
     nameElement.textContent = currentDisplayName;
     nameElement.style.display = '';
+    isEditingContactName = false; // Clear editing flag
   }
 
   // Replace name element with input
@@ -258,6 +437,7 @@ function editContactName(pubkey, nameElement) {
     e.stopPropagation();
   });
 }
+
 function loadContacts() {
   contacts.clear(); // Clear existing contacts first
 
@@ -267,7 +447,16 @@ function loadContacts() {
 
     if (saved) {
       const contactsArray = JSON.parse(saved);
-      contacts = new Map(contactsArray);
+      contactsArray.forEach(([pubkey, contact]) => {
+        // Ensure new fields exist for backward compatibility
+        if (!contact.hasOwnProperty('last_read_time')) {
+          contact.last_read_time = 0;
+        }
+        if (!contact.hasOwnProperty('unread_count')) {
+          contact.unread_count = 0;
+        }
+        contacts.set(pubkey, contact);
+      });
       console.log(`📂 Loaded ${contactsArray.length} contacts for pubkey: ${currentUser.public_key.substring(0, 8)}`);
     } else {
       console.log(`📂 No saved contacts found for pubkey: ${currentUser.public_key.substring(0, 8)}`);
@@ -276,32 +465,87 @@ function loadContacts() {
 
   renderContacts();
 
-  // Update last messages for all contacts
-  updateAllContactsLastMessages();
+  // Update last messages and unread counts for all contacts
+  updateAllContactsData();
 }
 
-// Update last message for all contacts
-async function updateAllContactsLastMessages() {
-  console.log('🔄 Updating last messages for all contacts...');
+// Update contact unread count
+async function updateContactUnreadCount(pubkey, skipRender = false) {
+  const contact = contacts.get(pubkey);
+  if (!contact) return;
 
-  for (const [pubkey, contact] of contacts) {
-    try {
-      const messages = await invoke('get_conversation', { otherPubkey: pubkey });
-      if (messages.length > 0) {
-        const lastMessage = messages[messages.length - 1];
-        contact.last_message = lastMessage.content.length > 30
-            ? lastMessage.content.substring(0, 30) + '...'
-            : lastMessage.content;
-        contact.last_message_time = lastMessage.timestamp;
+  try {
+    const messages = await invoke('get_conversation', { otherPubkey: pubkey });
+
+    if (messages.length > 0) {
+      // Update last message info
+      const lastMessage = messages[messages.length - 1];
+      contact.last_message = lastMessage.content.length > 30
+          ? lastMessage.content.substring(0, 30) + '...'
+          : lastMessage.content;
+      contact.last_message_time = lastMessage.timestamp;
+
+      // Count unread messages (messages newer than last_read_time and not from current user)
+      const unreadMessages = messages.filter(msg =>
+          msg.timestamp > contact.last_read_time && !msg.is_own_message
+      );
+
+      const previousUnreadCount = contact.unread_count;
+      contact.unread_count = unreadMessages.length;
+
+      // Log if unread count changed
+      if (contact.unread_count !== previousUnreadCount) {
+        console.log(`📬 Contact ${pubkey.substring(0, 8)} unread count: ${previousUnreadCount} → ${contact.unread_count}`);
       }
-    } catch (error) {
-      console.log(`Failed to get messages for ${pubkey.substring(0, 8)}:`, error);
+    } else {
+      contact.unread_count = 0;
     }
+
+    saveContacts();
+
+    // Only re-render if not currently editing a contact name and not skipping render
+    if (!isEditingContactName && !skipRender) {
+      renderContacts();
+    }
+  } catch (error) {
+    console.log(`Failed to update unread count for ${pubkey.substring(0, 8)}:`, error);
+  }
+}
+
+// Update last message and unread count for all contacts
+async function updateAllContactsData() {
+  console.log('🔄 Updating message data for all contacts...');
+
+  const updatePromises = Array.from(contacts.keys()).map(pubkey =>
+      updateContactUnreadCount(pubkey, true) // Skip individual renders
+  );
+
+  await Promise.all(updatePromises);
+
+  // Re-render once at the end if not editing
+  if (!isEditingContactName) {
+    renderContacts();
   }
 
-  saveContacts();
-  renderContacts();
-  console.log('✅ Finished updating contact last messages');
+  console.log('✅ Finished updating all contact data');
+}
+
+// Mark contact as read (when opening conversation)
+function markContactAsRead(pubkey) {
+  const contact = contacts.get(pubkey);
+  if (!contact) return;
+
+  const now = Math.floor(Date.now() / 1000);
+  const hadUnreadMessages = contact.unread_count > 0;
+
+  contact.last_read_time = now;
+  contact.unread_count = 0;
+
+  if (hadUnreadMessages) {
+    console.log(`👁️  Marked contact ${pubkey.substring(0, 8)} as read`);
+    saveContacts();
+    renderContacts();
+  }
 }
 
 // Save messages to localStorage (per conversation)
@@ -380,6 +624,7 @@ function clearMessageCaches() {
     console.log(`🧹 Cleared ${keysToDelete.length} message caches`);
   }
 }
+
 function saveContacts() {
   if (currentUser) {
     const contactsArray = Array.from(contacts.entries());
@@ -393,7 +638,22 @@ function saveContacts() {
 function renderContacts() {
   contactsList.innerHTML = '';
 
-  for (const [pubkey, contact] of contacts) {
+  // Sort contacts: active first, then by unread count (desc), then by last message time (desc)
+  const sortedContacts = Array.from(contacts.entries()).sort(([pubkeyA, contactA], [pubkeyB, contactB]) => {
+    // Current contact always first
+    if (pubkeyA === currentContact) return -1;
+    if (pubkeyB === currentContact) return 1;
+
+    // Then by unread count (descending)
+    if (contactB.unread_count !== contactA.unread_count) {
+      return contactB.unread_count - contactA.unread_count;
+    }
+
+    // Then by last message time (descending)
+    return (contactB.last_message_time || 0) - (contactA.last_message_time || 0);
+  });
+
+  for (const [pubkey, contact] of sortedContacts) {
     const contactEl = document.createElement('div');
     contactEl.className = 'contact-item';
     if (currentContact === pubkey) {
@@ -405,10 +665,16 @@ function renderContacts() {
         ? pubkey.substring(0, 16) + '...'
         : (contact.last_message || 'No messages');
 
+    // Create unread badge if there are unread messages
+    const unreadBadge = contact.unread_count > 0
+        ? `<span class="unread-badge">${contact.unread_count}</span>`
+        : '';
+
     contactEl.innerHTML = `
       <div class="contact-info">
         <div class="contact-name-row">
           <span class="contact-name">${displayName}</span>
+          ${unreadBadge}
           <button class="contact-edit-btn" title="Edit name">✏️</button>
         </div>
         <div class="contact-last-message">${displaySubtext}</div>
@@ -450,6 +716,10 @@ function renderContacts() {
 // Select contact
 async function selectContact(pubkey) {
   currentContact = pubkey;
+
+  // Mark contact as read when opening
+  markContactAsRead(pubkey);
+
   renderContacts();
 
   const contact = contacts.get(pubkey);
@@ -514,6 +784,10 @@ async function loadConversation(pubkey) {
             ? lastMessage.content.substring(0, 30) + '...'
             : lastMessage.content;
         contact.last_message_time = lastMessage.timestamp;
+
+        // Since we're viewing this conversation, mark as read
+        markContactAsRead(pubkey);
+
         saveContacts();
         renderContacts(); // Re-render to show updated last message
       }
@@ -632,25 +906,57 @@ async function sendMessage() {
 let messagePollingInterval;
 
 function startMessagePolling() {
+  // Don't start if polling is disabled in settings
+  if (!userSettings || !userSettings.pollingEnabled) {
+    console.log('📭 Message polling disabled in settings');
+    return;
+  }
+
+  const interval = userSettings.pollingInterval;
+  console.log(`🔄 Starting message polling every ${interval / 1000} seconds`);
+
   messagePollingInterval = setInterval(async () => {
     try {
-      const newMessages = await invoke('get_new_messages');
-      if (newMessages.length > 0) {
-        // Update conversation if viewing sender
-        const senders = [...new Set(newMessages.map(m => m.sender))];
-        if (currentContact && senders.includes(currentContact)) {
-          await loadConversation(currentContact);
+      // Check for new messages for all contacts
+      console.log('🔄 Polling for new messages...');
+
+      let hasNewMessages = false;
+      const checkPromises = Array.from(contacts.keys()).map(async (pubkey) => {
+        const contact = contacts.get(pubkey);
+        const oldUnreadCount = contact.unread_count;
+
+        await updateContactUnreadCount(pubkey, true); // Skip individual renders during polling
+
+        // Check if this contact got new messages
+        if (contact.unread_count > oldUnreadCount) {
+          hasNewMessages = true;
+          console.log(`📬 New messages from ${pubkey.substring(0, 8)}: +${contact.unread_count - oldUnreadCount}`);
         }
+      });
+
+      await Promise.all(checkPromises);
+
+      // Re-render once at the end if not editing and there were changes
+      if (!isEditingContactName) {
+        renderContacts();
       }
+
+      // If viewing a conversation that got new messages, refresh it
+      if (currentContact && hasNewMessages) {
+        await loadConversation(currentContact);
+      }
+
     } catch (error) {
       console.error('Failed to poll messages:', error);
     }
-  }, 3000);
+  }, interval);
 }
 
 function stopMessagePolling() {
   if (messagePollingInterval) {
     clearInterval(messagePollingInterval);
+    messagePollingInterval = null;
+    console.log('⏹️ Message polling stopped');
   }
 }
 
@@ -672,6 +978,9 @@ signInBtn.addEventListener('click', (e) => {
 });
 
 signOutBtn.addEventListener('click', signOut);
+settingsBtn.addEventListener('click', showSettings);
+closeSettingsBtn.addEventListener('click', closeSettings);
+saveSettingsBtn.addEventListener('click', applySettings);
 addContactBtn.addEventListener('click', addContact);
 sendBtn.addEventListener('click', sendMessage);
 
@@ -703,7 +1012,8 @@ window.debugContacts = {
         const contactsWithNames = contactsData.map(([pk, contact]) => ({
           pubkey: pk.substring(0, 16) + '...',
           name: contact.name || '(no name)',
-          lastMessage: contact.last_message || '(no messages)'
+          lastMessage: contact.last_message || '(no messages)',
+          unreadCount: contact.unread_count || 0
         }));
 
         accounts.push({
@@ -729,7 +1039,9 @@ window.debugContacts = {
       pubkey: pubkey.substring(0, 16) + '...',
       fullPubkey: pubkey,
       name: contact.name || '(no name)',
-      lastMessage: contact.last_message || '(no messages)'
+      lastMessage: contact.last_message || '(no messages)',
+      unreadCount: contact.unread_count || 0,
+      lastReadTime: new Date(contact.last_read_time * 1000).toLocaleString()
     }));
 
     console.table(contactsArray);
@@ -810,6 +1122,28 @@ window.debugContacts = {
       renderContacts();
       console.log(`🗑️  Cleared all data (${keysToDelete.length} items: contacts + message caches)`);
     }
+  },
+
+  // Clear saved session
+  clearSession: function() {
+    clearSavedSession();
+    console.log('🗑️ Cleared saved session');
+  },
+
+  // Force update unread counts
+  updateUnreadCounts: function() {
+    updateAllContactsData();
+    console.log('🔄 Forcing unread count update for all contacts');
+  },
+
+  // View current settings
+  viewSettings: function() {
+    if (!userSettings) {
+      console.log('❌ No settings loaded');
+      return;
+    }
+    console.log('⚙️ Current settings:', userSettings);
+    return userSettings;
   }
 };
 
@@ -820,3 +1154,6 @@ console.log('  debugContacts.messageCaches() - See message caches');
 console.log('  debugContacts.clearMessageCache(pubkey) - Clear specific message cache');
 console.log('  debugContacts.clearAccount(pubkey) - Clear specific account');
 console.log('  debugContacts.clearAll() - Clear all accounts and caches');
+console.log('  debugContacts.clearSession() - Clear saved session');
+console.log('  debugContacts.updateUnreadCounts() - Force update unread counts');
+console.log('  debugContacts.viewSettings() - View current settings');

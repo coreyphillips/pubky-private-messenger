@@ -2,12 +2,134 @@ use crate::messaging::{AppState, ChatMessage, Contact, UserProfile, PrivateMessa
 use anyhow::Result;
 use pkarr::{Keypair, PublicKey};
 use pubky_common::recovery_file;
-use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use serde::{Deserialize, Serialize};
 use tauri::{command, State};
 use tokio::task;
+use base64;
+use digest::Digest;
+use sha2::Sha256;
+use rand_core::{OsRng, RngCore};
+use hkdf::Hkdf;
+use chacha20poly1305::{
+    aead::{Aead, AeadCore, KeyInit, OsRng as ChaChaOsRng},
+    ChaCha20Poly1305, Nonce
+};
+
+// Session-related structures
+#[derive(Serialize, Deserialize)]
+pub struct SignInResult {
+    pub profile: UserProfile,
+    pub encrypted_keypair: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EncryptedSession {
+    ciphertext: Vec<u8>,
+    nonce: Vec<u8>,
+    salt: Vec<u8>,
+}
+
+// Secure key derivation using HKDF
+fn derive_encryption_key(salt: &[u8]) -> Result<[u8; 32], String> {
+    // Collect device-specific entropy
+    let mut device_info = Vec::new();
+
+    // Add hostname if available
+    if let Ok(hostname) = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")) {
+        device_info.extend_from_slice(hostname.as_bytes());
+    }
+
+    // Add username if available (additional entropy)
+    if let Ok(username) = std::env::var("USERNAME").or_else(|_| std::env::var("USER")) {
+        device_info.extend_from_slice(username.as_bytes());
+    }
+
+    // Add application identifier
+    device_info.extend_from_slice(b"pubky_private_messenger_v1");
+
+    // Use HKDF to derive a proper encryption key
+    let hk = Hkdf::<Sha256>::new(Some(salt), &device_info);
+    let mut key = [0u8; 32];
+    hk.expand(b"session_encryption_key", &mut key)
+        .map_err(|e| format!("HKDF expansion failed: {}", e))?;
+
+    Ok(key)
+}
+
+fn encrypt_keypair(keypair: &Keypair) -> Result<String, String> {
+    // Generate random salt for key derivation
+    let mut salt = [0u8; 32];
+    OsRng.fill_bytes(&mut salt);
+
+    // Derive encryption key using HKDF
+    let key = derive_encryption_key(&salt)?;
+
+    // Create cipher instance
+    let cipher = ChaCha20Poly1305::new_from_slice(&key)
+        .map_err(|e| format!("Failed to create cipher: {}", e))?;
+
+    // Generate random nonce
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut ChaChaOsRng);
+
+    // Serialize the keypair secret
+    let keypair_bytes = keypair.secret_key();
+
+    // Encrypt with authenticated encryption
+    let ciphertext = cipher.encrypt(&nonce, keypair_bytes.as_ref())
+        .map_err(|e| format!("Encryption failed: {}", e))?;
+
+    // Package everything together
+    let encrypted_session = EncryptedSession {
+        ciphertext,
+        nonce: nonce.to_vec(),
+        salt: salt.to_vec(),
+    };
+
+    // Serialize and encode
+    let serialized = serde_json::to_vec(&encrypted_session)
+        .map_err(|e| format!("Serialization failed: {}", e))?;
+
+    Ok(base64::encode(serialized))
+}
+
+fn decrypt_keypair(encrypted_data: &str) -> Result<Keypair, String> {
+    // Decode and deserialize
+    let serialized = base64::decode(encrypted_data)
+        .map_err(|e| format!("Base64 decode failed: {}", e))?;
+
+    let encrypted_session: EncryptedSession = serde_json::from_slice(&serialized)
+        .map_err(|e| format!("Deserialization failed: {}", e))?;
+
+    // Derive the same encryption key using stored salt
+    let key = derive_encryption_key(&encrypted_session.salt)?;
+
+    // Create cipher instance
+    let cipher = ChaCha20Poly1305::new_from_slice(&key)
+        .map_err(|e| format!("Failed to create cipher: {}", e))?;
+
+    // Reconstruct nonce
+    if encrypted_session.nonce.len() != 12 {
+        return Err("Invalid nonce length".to_string());
+    }
+    let mut nonce_array = [0u8; 12];
+    nonce_array.copy_from_slice(&encrypted_session.nonce);
+    let nonce = Nonce::from(nonce_array);
+
+    // Decrypt and authenticate
+    let decrypted = cipher.decrypt(&nonce, encrypted_session.ciphertext.as_ref())
+        .map_err(|e| format!("Decryption failed (invalid data or key): {}", e))?;
+
+    // Ensure we have exactly 32 bytes for the secret key
+    if decrypted.len() != 32 {
+        return Err(format!("Invalid decrypted data length: expected 32, got {}", decrypted.len()));
+    }
+
+    let mut secret_key = [0u8; 32];
+    secret_key.copy_from_slice(&decrypted);
+
+    // Create keypair from decrypted secret
+    Ok(Keypair::from_secret_key(&secret_key))
+}
 
 #[command]
 pub async fn init_client() -> Result<String, String> {
@@ -24,7 +146,7 @@ pub async fn sign_in_with_recovery(
     recovery_file_b64: String,
     passphrase: String,
     state: State<'_, AppState>,
-) -> Result<UserProfile, String> {
+) -> Result<SignInResult, String> {
     let result = task::spawn_blocking(move || -> Result<Keypair, String> {
         // Decode and decrypt recovery file
         let recovery_file_bytes = base64::decode(&recovery_file_b64)
@@ -56,8 +178,48 @@ pub async fn sign_in_with_recovery(
     let mut keypair_guard = state.keypair.lock().await;
     *keypair_guard = Some(result.clone());
 
+    // Encrypt keypair for storage using secure AEAD
+    let encrypted_keypair = encrypt_keypair(&result)?;
+
+    Ok(SignInResult {
+        profile: UserProfile {
+            public_key: result.public_key().to_string(),
+            signed_in: true,
+        },
+        encrypted_keypair,
+    })
+}
+
+#[command]
+pub async fn restore_session(
+    encrypted_keypair: String,
+    state: State<'_, AppState>,
+) -> Result<UserProfile, String> {
+    // Decrypt the keypair using secure AEAD
+    let keypair = decrypt_keypair(&encrypted_keypair)?;
+
+    // Test sign in to make sure the keypair is valid
+    let keypair_clone = keypair.clone();
+    let _sign_in_result = task::spawn_blocking(move || -> Result<(), String> {
+        let client = pubky::Client::builder().build()
+            .map_err(|e| format!("Failed to create client: {}", e))?;
+
+        let handler = PrivateMessageHandler::new(client, keypair_clone);
+
+        // Use a blocking runtime for the async sign_in call
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(handler.sign_in())
+            .map_err(|e| format!("Failed to sign in: {}", e))?;
+
+        Ok(())
+    }).await.map_err(|e| format!("Task failed: {}", e))??;
+
+    // Store keypair in state
+    let mut keypair_guard = state.keypair.lock().await;
+    *keypair_guard = Some(keypair.clone());
+
     Ok(UserProfile {
-        public_key: result.public_key().to_string(),
+        public_key: keypair.public_key().to_string(),
         signed_in: true,
     })
 }

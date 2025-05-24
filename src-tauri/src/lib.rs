@@ -17,6 +17,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             init_client,
             sign_in_with_recovery,
+            restore_session,  // New command for session persistence
             send_message,
             get_new_messages,
             get_conversation,

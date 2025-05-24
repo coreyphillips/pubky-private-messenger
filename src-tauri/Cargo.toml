@@ -1,6 +1,6 @@
 [package]
 name = "pubky-private-messenger"
-version = "0.1.0"
+version = "0.2.0"
 description = "Pubky Private Messenger"
 authors = ["Corey Phillips"]
 license = ""
@@ -42,5 +42,7 @@ snow = "0.9.6"
 once_cell = "1.21.3"
 base64 = "0.22.1"
 rand_core = "0.6.4"
-hkdf = "0.13.0-pre.5"
 chrono = "0.4.40"
+hkdf = { version = "0.12.4", features = ["std"] }
+chacha20poly1305 = "0.10.1"
+digest = "0.10.7"
