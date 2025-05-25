@@ -638,13 +638,10 @@ function saveContacts() {
 function renderContacts() {
   contactsList.innerHTML = '';
 
-  // Sort contacts: active first, then by unread count (desc), then by last message time (desc)
+  // Sort contacts: by unread count (desc), then by last message time (desc)
+  // No longer move active contact to top to prevent jumping
   const sortedContacts = Array.from(contacts.entries()).sort(([pubkeyA, contactA], [pubkeyB, contactB]) => {
-    // Current contact always first
-    if (pubkeyA === currentContact) return -1;
-    if (pubkeyB === currentContact) return 1;
-
-    // Then by unread count (descending)
+    // Sort by unread count (descending)
     if (contactB.unread_count !== contactA.unread_count) {
       return contactB.unread_count - contactA.unread_count;
     }
@@ -805,6 +802,45 @@ async function loadConversation(pubkey) {
   }
 }
 
+// Helper function to format message timestamps with better date information
+function formatMessageTimestamp(timestamp) {
+  const messageDate = new Date(timestamp * 1000);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+  const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const messageDateOnly = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate());
+  const timeString = messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  // Today: just show time
+  if (messageDateOnly.getTime() === today.getTime()) {
+    return timeString;
+  }
+
+  // Yesterday: show "Yesterday" + time
+  if (messageDateOnly.getTime() === yesterday.getTime()) {
+    return `Yesterday ${timeString}`;
+  }
+
+  // This week: show day name + time
+  if (messageDateOnly.getTime() >= weekAgo.getTime()) {
+    const dayName = messageDate.toLocaleDateString([], { weekday: 'short' });
+    return `${dayName} ${timeString}`;
+  }
+
+  // Older: show full date + time
+  // If it's from this year, don't show the year
+  if (messageDate.getFullYear() === now.getFullYear()) {
+    const dateString = messageDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `${dateString} ${timeString}`;
+  }
+
+  // Different year: show full date including year
+  const dateString = messageDate.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  return `${dateString} ${timeString}`;
+}
+
 // Render messages
 function renderMessages(messages) {
   messagesContainer.innerHTML = '';
@@ -813,7 +849,7 @@ function renderMessages(messages) {
     const messageEl = document.createElement('div');
     messageEl.className = `message ${message.is_own_message ? 'own' : 'other'}`;
 
-    const timestamp = new Date(message.timestamp * 1000).toLocaleTimeString();
+    const timestamp = formatMessageTimestamp(message.timestamp);
     const verifiedIcon = message.verified ? '✅' : '⚠️';
 
     messageEl.innerHTML = `
