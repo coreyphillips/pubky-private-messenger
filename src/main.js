@@ -485,7 +485,7 @@ async function updateContactUnreadCount(pubkey, skipRender = false) {
           : lastMessage.content;
       contact.last_message_time = lastMessage.timestamp;
 
-      // Count unread messages (messages newer than last_read_time and not from current user)
+      // Count unread messages
       const unreadMessages = messages.filter(msg =>
           msg.timestamp > contact.last_read_time && !msg.is_own_message
       );
@@ -493,10 +493,27 @@ async function updateContactUnreadCount(pubkey, skipRender = false) {
       const previousUnreadCount = contact.unread_count;
       contact.unread_count = unreadMessages.length;
 
+      // Cache messages if:
+      // 1. Unread count changed (new messages arrived)
+      // 2. OR no cache exists yet (first time checking)
+      // 3. OR the last message is different (could be user sent a message)
+      const cachedMessages = loadMessagesCache(pubkey);
+      const shouldCache =
+          contact.unread_count !== previousUnreadCount ||
+          !cachedMessages ||
+          (cachedMessages.length > 0 &&
+              cachedMessages[cachedMessages.length - 1].timestamp !== lastMessage.timestamp);
+
+      if (shouldCache) {
+        saveMessagesCache(pubkey, messages);
+        console.log(`💾 Cached messages for ${pubkey.substring(0, 8)} (unread: ${previousUnreadCount} → ${contact.unread_count})`);
+      }
+
       // Log if unread count changed
       if (contact.unread_count !== previousUnreadCount) {
         console.log(`📬 Contact ${pubkey.substring(0, 8)} unread count: ${previousUnreadCount} → ${contact.unread_count}`);
       }
+
     } else {
       contact.unread_count = 0;
     }
@@ -953,33 +970,49 @@ function startMessagePolling() {
 
   messagePollingInterval = setInterval(async () => {
     try {
-      // Check for new messages for all contacts
       console.log('🔄 Polling for new messages...');
 
       let hasNewMessages = false;
+      let currentContactHasNewMessages = false;
+
       const checkPromises = Array.from(contacts.keys()).map(async (pubkey) => {
         const contact = contacts.get(pubkey);
         const oldUnreadCount = contact.unread_count;
 
-        await updateContactUnreadCount(pubkey, true); // Skip individual renders during polling
+        await updateContactUnreadCount(pubkey, true);
 
         // Check if this contact got new messages
         if (contact.unread_count > oldUnreadCount) {
           hasNewMessages = true;
           console.log(`📬 New messages from ${pubkey.substring(0, 8)}: +${contact.unread_count - oldUnreadCount}`);
+
+          // Check if it's the current conversation
+          if (currentContact === pubkey) {
+            currentContactHasNewMessages = true;
+          }
         }
       });
 
       await Promise.all(checkPromises);
 
-      // Re-render once at the end if not editing and there were changes
+      // Re-render contacts if not editing
       if (!isEditingContactName) {
         renderContacts();
       }
 
-      // If viewing a conversation that got new messages, refresh it
-      if (currentContact && hasNewMessages) {
-        await loadConversation(currentContact);
+      // If viewing a conversation that got new messages, refresh it from cache
+      if (currentContact && currentContactHasNewMessages) {
+        console.log('🔄 Refreshing current conversation with new messages');
+
+        // Since we already cached the messages during polling,
+        // we can just load from cache for instant update
+        const cachedMessages = loadMessagesCache(currentContact);
+        if (cachedMessages) {
+          renderMessages(cachedMessages);
+
+          // Mark as read since user is viewing it
+          markContactAsRead(currentContact);
+        }
       }
 
     } catch (error) {
