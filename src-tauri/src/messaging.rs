@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use pkarr::{Keypair, PublicKey};
 use serde::{Deserialize, Serialize};
@@ -9,12 +8,13 @@ use sha2::{Digest, Sha512};
 use uuid::Uuid;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use curve25519_dalek::edwards::CompressedEdwardsY;
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::{Signature};
 use pubky_common::recovery_file;
 use pubky_common::session::Session;
 use base64;
 use hex;
 use tokio::sync::Mutex;
+use futures::future::join_all;
 
 // Function for proper Edwards to Montgomery curve conversion
 fn ed25519_public_to_x25519(ed_pub: &[u8; 32]) -> Option<X25519PublicKey> {
@@ -454,6 +454,34 @@ impl PrivateMessageHandler {
             .map_err(|e| anyhow!("Failed to sign in: {}", e))
     }
 
+    // Get current user's own profile
+    pub async fn get_own_profile(&self) -> Result<Option<String>> {
+        let profile_url = format!("pubky://{}/pub/pubky.app/profile.json", self.keypair.public_key());
+
+        println!("🔍 Fetching own profile from: {}", profile_url);
+
+        let response = self.client.get(&profile_url).send().await?;
+
+        if response.status().is_success() {
+            let profile_data = response.text().await?;
+
+            // Try to parse the profile
+            match serde_json::from_str::<PubkyProfile>(&profile_data) {
+                Ok(profile) => {
+                    println!("✅ Found own profile name: {}", profile.name);
+                    Ok(Some(profile.name))
+                }
+                Err(e) => {
+                    println!("⚠️  Failed to parse own profile: {}", e);
+                    Ok(None)
+                }
+            }
+        } else {
+            println!("📭 No profile found for current user");
+            Ok(None)
+        }
+    }
+
     pub fn decrypt_recovery_file(&self, recovery_file: &str, passphrase: &str) -> Result<Keypair> {
         if recovery_file.is_empty() || passphrase.is_empty() {
             return Err(anyhow!("Recovery file and passphrase must not be empty"));
@@ -467,15 +495,148 @@ impl PrivateMessageHandler {
 
         Ok(keypair)
     }
+
+    // Extract pubky from follow URL
+    fn extract_pubky_from_follow_url(url: &str) -> Option<String> {
+        // URL format: pubky://[your_pubky]/pub/pubky.app/follows/[followed_pubky]
+        url.split('/').last().map(|s| s.to_string())
+    }
+
+    // Get list of followed users
+    pub async fn get_followed_users(&self) -> Result<Vec<String>> {
+        let follows_url = format!("pubky://{}/pub/pubky.app/follows/", self.keypair.public_key());
+
+        println!("🔍 Fetching follows from: {}", follows_url);
+
+        let response = self.client.get(&follows_url).send().await?;
+
+        if response.status().is_success() {
+            let follows_response = response.text().await?;
+
+            // Split the response by newlines to get individual URLs
+            let follow_urls: Vec<String> = follows_response.lines()
+                .filter(|line| !line.is_empty())
+                .map(|url| url.to_string())
+                .collect();
+
+            println!("✅ Found {} followed users", follow_urls.len());
+            Ok(follow_urls)
+        } else {
+            println!("❌ Failed to fetch follows: {}", response.status());
+            Ok(Vec::new()) // Return empty list instead of error
+        }
+    }
+
+    // Get profile info for a single user
+    async fn get_user_profile(&self, follow_url: &str) -> Result<FollowedUser> {
+        // Extract the pubky ID from the follow URL
+        let pubky_id = Self::extract_pubky_from_follow_url(follow_url)
+            .ok_or_else(|| anyhow!("Failed to extract pubky from URL"))?;
+
+        // Construct the profile URL for this user
+        let profile_url = format!("pubky://{}/pub/pubky.app/profile.json", pubky_id);
+
+        // Fetch the user's profile
+        let response = self.client.get(&profile_url).send().await?;
+
+        if response.status().is_success() {
+            let profile_data = response.text().await?;
+
+            // Try to parse the profile
+            match serde_json::from_str::<PubkyProfile>(&profile_data) {
+                Ok(profile) => {
+                    Ok(FollowedUser {
+                        name: Some(profile.name),
+                        pubky: pubky_id,
+                    })
+                }
+                Err(e) => {
+                    println!("⚠️  Failed to parse profile for {}: {}", pubky_id, e);
+                    Ok(FollowedUser {
+                        name: None,
+                        pubky: pubky_id,
+                    })
+                }
+            }
+        } else {
+            // Profile not found or error - just return the pubky without a name
+            Ok(FollowedUser {
+                name: None,
+                pubky: pubky_id,
+            })
+        }
+    }
+
+    // Get all followed users with their profiles
+    pub async fn get_followed_users_with_profiles(&self) -> Result<Vec<FollowedUser>> {
+        // First, get the list of follows
+        let follow_urls = self.get_followed_users().await?;
+
+        if follow_urls.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        println!("📋 Fetching profiles for {} users...", follow_urls.len());
+
+        // Create futures for all profile fetches
+        let profile_futures: Vec<_> = follow_urls
+            .iter()
+            .map(|follow_url| {
+                let url = follow_url.clone();
+                async move {
+                    self.get_user_profile(&url).await
+                }
+            })
+            .collect();
+
+        // Execute all requests in parallel
+        let results = join_all(profile_futures).await;
+
+        // Process results
+        let mut users = Vec::new();
+        let mut success_count = 0;
+        let mut no_profile_count = 0;
+
+        for result in results {
+            match result {
+                Ok(user) => {
+                    if user.name.is_some() {
+                        success_count += 1;
+                        println!("  ✓ Found profile: {} - {}",
+                            user.name.as_ref().unwrap(),
+                            user.pubky.chars().take(8).collect::<String>()
+                        );
+                    } else {
+                        no_profile_count += 1;
+                        println!("  ⚠️  No profile found for: {}",
+                            user.pubky.chars().take(8).collect::<String>()
+                        );
+                    }
+                    users.push(user);
+                },
+                Err(e) => {
+                    println!("  ✗ Failed to process user: {}", e);
+                }
+            }
+        }
+
+        println!("📊 Summary: {} profiles found, {} without profiles",
+            success_count, no_profile_count);
+
+        Ok(users)
+    }
 }
+
 pub struct AppState {
     pub keypair: Mutex<Option<Keypair>>,
+    pub user_name: Mutex<Option<String>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
             keypair: Mutex::new(None),
+            user_name: Mutex::new(None),
         }
     }
 
@@ -514,4 +675,28 @@ pub struct Contact {
 pub struct UserProfile {
     pub public_key: String,
     pub signed_in: bool,
+    pub name: Option<String>,
+}
+
+// Profile struct for parsing Pubky profiles
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PubkyProfile {
+    pub name: String,
+    pub bio: Option<String>,
+    pub image: Option<String>,
+    pub links: Option<Vec<Link>>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Link {
+    pub title: String,
+    pub url: String,
+}
+
+// Struct to hold name and pubky for a followed user
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FollowedUser {
+    pub name: Option<String>,
+    pub pubky: String,
 }

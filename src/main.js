@@ -246,9 +246,15 @@ function showChatScreen(profile) {
   currentUser = profile;
   loginScreen.classList.add('hidden');
   chatScreen.classList.remove('hidden');
-  userPubkeySpan.textContent = profile.public_key.substring(0, 16) + '...';
 
-  console.log(`🔐 Signed in as: ${profile.public_key.substring(0, 8)}`);
+  // Display user's name if available, otherwise show truncated pubkey
+  if (profile.name) {
+    userPubkeySpan.textContent = `${profile.name} (${profile.public_key.substring(0, 8)}...)`;
+  } else {
+    userPubkeySpan.textContent = profile.public_key.substring(0, 16) + '...';
+  }
+
+  console.log(`🔐 Signed in as: ${profile.name || profile.public_key.substring(0, 8)}`);
 
   // Load user settings
   loadSettings();
@@ -256,9 +262,30 @@ function showChatScreen(profile) {
   // Load contacts specific to this pubky account
   loadContacts();
 
+  // Scan for followed users from Pubky
+  scanForFollowedUsers();
+
   // Start polling for new messages (if enabled in settings)
   if (userSettings.pollingEnabled) {
     startMessagePolling();
+  }
+}
+
+async function updateUserProfileName() {
+  try {
+    const profile = await invoke('get_user_profile');
+    if (profile && currentUser) {
+      currentUser.name = profile.name;
+
+      // Update the display
+      if (profile.name) {
+        userPubkeySpan.textContent = `${profile.name} (${profile.public_key.substring(0, 8)}...)`;
+      } else {
+        userPubkeySpan.textContent = profile.public_key.substring(0, 16) + '...';
+      }
+    }
+  } catch (error) {
+    console.error('Failed to update user profile:', error);
   }
 }
 
@@ -467,6 +494,74 @@ function loadContacts() {
 
   // Update last messages and unread counts for all contacts
   updateAllContactsData();
+}
+
+async function scanForFollowedUsers() {
+  try {
+    console.log('🔍 Scanning for followed users from Pubky...');
+
+    const followedUsers = await invoke('scan_followed_users');
+
+    if (!followedUsers || followedUsers.length === 0) {
+      console.log('📭 No followed users found');
+      return;
+    }
+
+    console.log(`📋 Found ${followedUsers.length} followed users`);
+
+    let newContactsAdded = 0;
+    let namesUpdated = 0;
+
+    for (const user of followedUsers) {
+      // Check if contact already exists
+      if (contacts.has(user.pubky)) {
+        // Contact exists - check if we should update the name
+        const existingContact = contacts.get(user.pubky);
+
+        // Only update name if:
+        // 1. The user has a name in their profile (user.name is not null)
+        // 2. AND the existing contact doesn't have a custom name set
+        if (user.name && !existingContact.name) {
+          existingContact.name = user.name;
+          namesUpdated++;
+          console.log(`📝 Updated name for ${user.pubky.substring(0, 8)}: ${user.name}`);
+        }
+      } else {
+        // New contact - add it
+        contacts.set(user.pubky, {
+          public_key: user.pubky,
+          name: user.name || null,  // Use profile name if available
+          last_message: null,
+          last_message_time: null,
+          last_read_time: 0,
+          unread_count: 0
+        });
+        newContactsAdded++;
+        console.log(`➕ Added new contact ${user.pubky.substring(0, 8)}${user.name ? ` (${user.name})` : ''}`);
+      }
+    }
+
+    if (newContactsAdded > 0 || namesUpdated > 0) {
+      saveContacts();
+      renderContacts();
+
+      console.log(`✅ Scan complete: ${newContactsAdded} new contacts, ${namesUpdated} names updated`);
+
+      // Check for messages from new contacts after a short delay
+      if (newContactsAdded > 0) {
+        setTimeout(() => {
+          console.log('🔄 Checking for messages from new contacts...');
+          updateAllContactsData();
+        }, 2000);
+      }
+    } else {
+      console.log('✅ Scan complete: All followed users already in contacts');
+    }
+
+  } catch (error) {
+    console.error('Failed to scan followed users:', error);
+    // Don't show error to user - this is a non-critical feature
+  }
 }
 
 // Update contact unread count
@@ -1213,6 +1308,24 @@ window.debugContacts = {
     }
     console.log('⚙️ Current settings:', userSettings);
     return userSettings;
+  },
+
+  scanFollows: async function() {
+    if (!currentUser) {
+      console.log('❌ No user signed in');
+      return;
+    }
+    console.log('🔍 Manually triggering follow scan...');
+    await scanForFollowedUsers();
+  },
+
+  refreshProfile: async function() {
+    if (!currentUser) {
+      console.log('❌ No user signed in');
+      return;
+    }
+    console.log('🔄 Refreshing user profile...');
+    await updateUserProfileName();
   }
 };
 
@@ -1226,3 +1339,5 @@ console.log('  debugContacts.clearAll() - Clear all accounts and caches');
 console.log('  debugContacts.clearSession() - Clear saved session');
 console.log('  debugContacts.updateUnreadCounts() - Force update unread counts');
 console.log('  debugContacts.viewSettings() - View current settings');
+console.log('  debugContacts.scanFollows() - Manually scan for followed users');
+console.log('  debugContacts.refreshProfile() - Refresh user profile name');

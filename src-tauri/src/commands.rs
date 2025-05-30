@@ -1,19 +1,19 @@
-use crate::messaging::{AppState, ChatMessage, Contact, UserProfile, PrivateMessageHandler};
+use crate::messaging::{AppState, ChatMessage, PrivateMessageHandler, UserProfile};
 use anyhow::Result;
-use pkarr::{Keypair, PublicKey};
-use pubky_common::recovery_file;
-use serde::{Deserialize, Serialize};
-use tauri::{command, State};
-use tokio::task;
 use base64;
-use digest::Digest;
-use sha2::Sha256;
-use rand_core::{OsRng, RngCore};
-use hkdf::Hkdf;
 use chacha20poly1305::{
     aead::{Aead, AeadCore, KeyInit, OsRng as ChaChaOsRng},
     ChaCha20Poly1305, Nonce
 };
+use digest::Digest;
+use hkdf::Hkdf;
+use pkarr::{Keypair, PublicKey};
+use pubky_common::recovery_file;
+use rand_core::{OsRng, RngCore};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+use tauri::{command, State};
+use tokio::task;
 
 // Session-related structures
 #[derive(Serialize, Deserialize)]
@@ -158,25 +158,35 @@ pub async fn sign_in_with_recovery(
         Ok(keypair)
     }).await.map_err(|e| format!("Task failed: {}", e))??;
 
-    // Test sign in
+    // Test sign in and get profile name
     let keypair_clone = result.clone();
-    let _sign_in_result = task::spawn_blocking(move || -> Result<(), String> {
+    let profile_name = task::spawn_blocking(move || -> Result<Option<String>, String> {
         let client = pubky::Client::builder().build()
             .map_err(|e| format!("Failed to create client: {}", e))?;
 
         let handler = PrivateMessageHandler::new(client, keypair_clone);
 
-        // Use a blocking runtime for the async sign_in call
+        // Use a blocking runtime for the async calls
         let rt = tokio::runtime::Handle::current();
+
+        // Sign in first
         rt.block_on(handler.sign_in())
             .map_err(|e| format!("Failed to sign in: {}", e))?;
 
-        Ok(())
+        // Get own profile name
+        let name = rt.block_on(handler.get_own_profile())
+            .map_err(|e| format!("Failed to get profile: {}", e))?;
+
+        Ok(name)
     }).await.map_err(|e| format!("Task failed: {}", e))??;
 
     // Store keypair in state
     let mut keypair_guard = state.keypair.lock().await;
     *keypair_guard = Some(result.clone());
+
+    // Store user name in state
+    let mut name_guard = state.user_name.lock().await;
+    *name_guard = profile_name.clone();
 
     // Encrypt keypair for storage using secure AEAD
     let encrypted_keypair = encrypt_keypair(&result)?;
@@ -185,6 +195,7 @@ pub async fn sign_in_with_recovery(
         profile: UserProfile {
             public_key: result.public_key().to_string(),
             signed_in: true,
+            name: profile_name,
         },
         encrypted_keypair,
     })
@@ -198,29 +209,40 @@ pub async fn restore_session(
     // Decrypt the keypair using secure AEAD
     let keypair = decrypt_keypair(&encrypted_keypair)?;
 
-    // Test sign in to make sure the keypair is valid
+    // Test sign in and get profile name
     let keypair_clone = keypair.clone();
-    let _sign_in_result = task::spawn_blocking(move || -> Result<(), String> {
+    let profile_name = task::spawn_blocking(move || -> Result<Option<String>, String> {
         let client = pubky::Client::builder().build()
             .map_err(|e| format!("Failed to create client: {}", e))?;
 
         let handler = PrivateMessageHandler::new(client, keypair_clone);
 
-        // Use a blocking runtime for the async sign_in call
+        // Use a blocking runtime for the async calls
         let rt = tokio::runtime::Handle::current();
+
+        // Sign in first
         rt.block_on(handler.sign_in())
             .map_err(|e| format!("Failed to sign in: {}", e))?;
 
-        Ok(())
+        // Get own profile name
+        let name = rt.block_on(handler.get_own_profile())
+            .map_err(|e| format!("Failed to get profile: {}", e))?;
+
+        Ok(name)
     }).await.map_err(|e| format!("Task failed: {}", e))??;
 
     // Store keypair in state
     let mut keypair_guard = state.keypair.lock().await;
     *keypair_guard = Some(keypair.clone());
 
+    // Store user name in state
+    let mut name_guard = state.user_name.lock().await;
+    *name_guard = profile_name.clone();
+
     Ok(UserProfile {
         public_key: keypair.public_key().to_string(),
         signed_in: true,
+        name: profile_name,
     })
 }
 
@@ -349,11 +371,13 @@ pub async fn get_user_profile(
     state: State<'_, AppState>,
 ) -> Result<Option<UserProfile>, String> {
     let keypair_guard = state.keypair.lock().await;
+    let name_guard = state.user_name.lock().await;
 
     if let Some(keypair) = keypair_guard.as_ref() {
         Ok(Some(UserProfile {
             public_key: keypair.public_key().to_string(),
             signed_in: true,
+            name: name_guard.clone(),
         }))
     } else {
         Ok(None)
@@ -364,5 +388,41 @@ pub async fn get_user_profile(
 pub async fn sign_out(state: State<'_, AppState>) -> Result<String, String> {
     let mut keypair_guard = state.keypair.lock().await;
     *keypair_guard = None;
+
+    let mut name_guard = state.user_name.lock().await;
+    *name_guard = None;
+
     Ok("Signed out successfully".to_string())
+}
+
+#[command]
+pub async fn scan_followed_users(state: State<'_, AppState>) -> Result<Vec<crate::messaging::FollowedUser>, String> {
+    let keypair = {
+        let keypair_guard = state.keypair.lock().await;
+        keypair_guard.clone().ok_or("Not signed in")?
+    };
+
+    println!("🔍 Scanning for followed users...");
+
+    let users = task::spawn_blocking(move || -> Result<Vec<crate::messaging::FollowedUser>, String> {
+        let client = pubky::Client::builder().build()
+            .map_err(|e| format!("Failed to create client: {}", e))?;
+
+        let handler = PrivateMessageHandler::new(client, keypair);
+
+        let rt = tokio::runtime::Handle::current();
+
+        // Sign in first
+        rt.block_on(handler.sign_in())
+            .map_err(|e| format!("Failed to sign in: {}", e))?;
+
+        // Get followed users with profiles
+        let users = rt.block_on(handler.get_followed_users_with_profiles())
+            .map_err(|e| format!("Failed to get followed users: {}", e))?;
+
+        Ok(users)
+    }).await.map_err(|e| format!("Task failed: {}", e))??;
+
+    println!("✅ Found {} followed users", users.len());
+    Ok(users)
 }

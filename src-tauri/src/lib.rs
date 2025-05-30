@@ -1,8 +1,6 @@
-// Import your modules
 pub mod commands;
 pub mod messaging;
 
-// Re-export your types and functions
 pub use commands::*;
 pub use messaging::*;
 
@@ -17,12 +15,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             init_client,
             sign_in_with_recovery,
-            restore_session,  // New command for session persistence
+            restore_session,
             send_message,
             get_new_messages,
             get_conversation,
             get_user_profile,
-            sign_out
+            sign_out,
+            scan_followed_users
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

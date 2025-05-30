@@ -121,6 +121,17 @@ body {
     display: flex;
     align-items: center;
     gap: 1rem;
+    flex: 1;  /* Allow it to take available space */
+    min-width: 0; /* Enable text truncation */
+}
+
+#user-pubkey {
+    color: white;
+    font-size: 0.95rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 400px; /* Limit max width for very long names */
 }
 
 .chat-main {
