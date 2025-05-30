@@ -73,6 +73,7 @@
       </div>
 
       <div class="settings-content">
+        <!-- Message Polling Settings -->
         <div class="setting-group">
           <h3>Message Polling</h3>
 
@@ -99,6 +100,23 @@
             </select>
             <p class="setting-description">
               How often to check for new messages. More frequent = more responsive but uses more resources.
+            </p>
+          </div>
+        </div>
+
+        <!-- NEW: Pubky Sync Settings -->
+        <div class="setting-group">
+          <h3>Pubky Integration</h3>
+
+          <div class="setting-item">
+            <label class="setting-label">
+              <input type="checkbox" id="pubky-sync-enabled" checked>
+              <span class="setting-name">Sync contacts from Pubky follows</span>
+            </label>
+            <p class="setting-description">
+              Automatically import your followed users from Pubky as contacts when you sign in.
+              This will fetch their profile names and make it easier to start conversations.
+              Your custom contact names will never be overwritten.
             </p>
           </div>
         </div>

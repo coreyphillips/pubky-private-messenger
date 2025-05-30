@@ -14,7 +14,8 @@ const SESSION_STORAGE_KEY = 'pubky_session';
 // Default settings
 const DEFAULT_SETTINGS = {
   pollingEnabled: true,
-  pollingInterval: 5000, // 5 seconds
+  pollingInterval: 5000,
+  pubkySyncEnabled: true,
 };
 
 // DOM elements
@@ -41,6 +42,8 @@ const conversationTitle = document.getElementById('conversation-title');
 const pollingEnabledToggle = document.getElementById('polling-enabled');
 const pollingIntervalSelect = document.getElementById('polling-interval');
 const saveSettingsBtn = document.getElementById('save-settings-btn');
+const pubkySyncEnabledToggle = document.getElementById('pubky-sync-enabled');
+
 
 // Initialize app
 async function init() {
@@ -122,6 +125,7 @@ function showSettings() {
   // Load current settings into UI
   pollingEnabledToggle.checked = userSettings.pollingEnabled;
   pollingIntervalSelect.value = userSettings.pollingInterval.toString();
+  pubkySyncEnabledToggle.checked = userSettings.pubkySyncEnabled;
 
   // Show settings panel
   settingsPanel.classList.remove('hidden');
@@ -135,13 +139,16 @@ function applySettings() {
   // Get values from UI
   const pollingEnabled = pollingEnabledToggle.checked;
   const pollingInterval = parseInt(pollingIntervalSelect.value);
+  const pubkySyncEnabled = pubkySyncEnabledToggle.checked; // NEW
 
   // Update settings
   const oldPollingEnabled = userSettings.pollingEnabled;
   const oldPollingInterval = userSettings.pollingInterval;
+  const oldPubkySyncEnabled = userSettings.pubkySyncEnabled; // NEW
 
   userSettings.pollingEnabled = pollingEnabled;
   userSettings.pollingInterval = pollingInterval;
+  userSettings.pubkySyncEnabled = pubkySyncEnabled; // NEW
 
   // Save settings
   saveSettings();
@@ -154,6 +161,17 @@ function applySettings() {
     stopMessagePolling();
     if (pollingEnabled) {
       startMessagePolling();
+    }
+  }
+
+  // Log Pubky sync change
+  if (oldPubkySyncEnabled !== pubkySyncEnabled) {
+    console.log(`⚙️ Pubky sync ${pubkySyncEnabled ? 'enabled' : 'disabled'}`);
+
+    // If sync was just enabled, run it now
+    if (pubkySyncEnabled && !oldPubkySyncEnabled) {
+      console.log('🔄 Running Pubky sync now...');
+      scanForFollowedUsers();
     }
   }
 
@@ -498,6 +516,12 @@ function loadContacts() {
 
 async function scanForFollowedUsers() {
   try {
+    // Check if sync is enabled
+    if (!userSettings.pubkySyncEnabled) {
+      console.log('📭 Pubky sync is disabled in settings');
+      return;
+    }
+
     console.log('🔍 Scanning for followed users from Pubky...');
 
     const followedUsers = await invoke('scan_followed_users');
@@ -1310,13 +1334,36 @@ window.debugContacts = {
     return userSettings;
   },
 
-  scanFollows: async function() {
+  togglePubkySync: function() {
+    if (!userSettings) {
+      console.log('❌ No settings loaded');
+      return;
+    }
+    userSettings.pubkySyncEnabled = !userSettings.pubkySyncEnabled;
+    saveSettings();
+    console.log(`⚙️ Pubky sync ${userSettings.pubkySyncEnabled ? 'enabled' : 'disabled'}`);
+    if (userSettings.pubkySyncEnabled) {
+      console.log('💡 Run debugContacts.scanFollows() to sync now');
+    }
+  },
+
+  scanFollows: async function(force = false) {
     if (!currentUser) {
       console.log('❌ No user signed in');
       return;
     }
-    console.log('🔍 Manually triggering follow scan...');
-    await scanForFollowedUsers();
+
+    if (force) {
+      console.log('🔍 Force triggering follow scan (ignoring settings)...');
+      // Temporarily bypass the setting check
+      const originalSetting = userSettings.pubkySyncEnabled;
+      userSettings.pubkySyncEnabled = true;
+      await scanForFollowedUsers();
+      userSettings.pubkySyncEnabled = originalSetting;
+    } else {
+      console.log('🔍 Manually triggering follow scan...');
+      await scanForFollowedUsers();
+    }
   },
 
   refreshProfile: async function() {
@@ -1341,3 +1388,4 @@ console.log('  debugContacts.updateUnreadCounts() - Force update unread counts')
 console.log('  debugContacts.viewSettings() - View current settings');
 console.log('  debugContacts.scanFollows() - Manually scan for followed users');
 console.log('  debugContacts.refreshProfile() - Refresh user profile name');
+console.log('  debugContacts.togglePubkySync() - Toggle Pubky sync on/off');
