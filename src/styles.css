@@ -422,13 +422,21 @@ body {
     border-top: 1px solid #dee2e6;
     display: flex;
     gap: 0.5rem;
+    align-items: center;
 }
 
-.message-input-container input {
+.message-input-container textarea {
     flex: 1;
     padding: 0.75rem;
     border: 1px solid #ddd;
     border-radius: 5px;
+    font-family: inherit;
+    font-size: 1rem;
+    resize: none;
+    min-height: 40px;
+    max-height: 120px;
+    overflow-y: auto;
+    line-height: 1.4;
 }
 
 .message-input-container button {
@@ -438,6 +446,8 @@ body {
     border: none;
     border-radius: 5px;
     cursor: pointer;
+    min-height: 40px;
+    align-self: stretch;
 }
 
 .message-input-container button:disabled {

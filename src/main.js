@@ -1277,11 +1277,27 @@ saveSettingsBtn.addEventListener('click', applySettings);
 addContactBtn.addEventListener('click', addContact);
 sendBtn.addEventListener('click', sendMessage);
 
-messageInput.addEventListener('keypress', (e) => {
-  if (e.key === 'Enter') {
+messageInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
     sendMessage();
   }
 });
+
+// Auto-resize textarea
+function autoResizeTextarea() {
+  messageInput.style.height = 'auto';
+  messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
+}
+
+messageInput.addEventListener('input', autoResizeTextarea);
+
+// Reset textarea height after sending
+const originalSendMessage = sendMessage;
+sendMessage = async function() {
+  await originalSendMessage();
+  messageInput.style.height = 'auto';
+};
 
 
 // Add search input event listener
