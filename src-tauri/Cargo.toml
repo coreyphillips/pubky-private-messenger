@@ -1,6 +1,6 @@
 [package]
 name = "pubky-private-messenger"
-version = "0.3.0"
+version = "0.4.0"
 description = "Pubky Private Messenger"
 authors = ["Corey Phillips"]
 license = "MIT"
