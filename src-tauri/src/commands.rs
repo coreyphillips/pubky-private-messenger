@@ -154,18 +154,17 @@ pub async fn sign_in_with_recovery(
         Ok(keypair)
     }).await.map_err(|e| format!("Task failed: {}", e))??;
 
-    // Test sign in and get profile name
-    let keypair_clone = result.clone();
-    let client = state.get_or_create_client().await?;
+// Store keypair in state first
+    let mut keypair_guard = state.keypair.lock().await;
+    *keypair_guard = Some(result.clone());
+    drop(keypair_guard);
+
+    // Create handler and sign in to get profile name
+    let handler = state.create_handler_and_sign_in().await?
+        .ok_or("Failed to create handler")?;
+
     let profile_name = task::spawn_blocking(move || -> Result<Option<String>, String> {
-        let handler = PrivateMessageHandler::new(client, keypair_clone);
-
-        // Use a blocking runtime for the async calls
         let rt = tokio::runtime::Handle::current();
-
-        // Sign in first
-        rt.block_on(handler.sign_in())
-            .map_err(|e| format!("Failed to sign in: {}", e))?;
 
         // Get own profile name
         let name = rt.block_on(handler.get_own_profile())
@@ -173,10 +172,6 @@ pub async fn sign_in_with_recovery(
 
         Ok(name)
     }).await.map_err(|e| format!("Task failed: {}", e))??;
-
-    // Store keypair in state
-    let mut keypair_guard = state.keypair.lock().await;
-    *keypair_guard = Some(result.clone());
 
     // Store user name in state
     let mut name_guard = state.user_name.lock().await;
@@ -203,18 +198,17 @@ pub async fn restore_session(
     // Decrypt the keypair using secure AEAD
     let keypair = decrypt_keypair(&encrypted_keypair)?;
 
-    // Test sign in and get profile name
-    let keypair_clone = keypair.clone();
-    let client = state.get_or_create_client().await?;
+    // Store keypair in state first
+    let mut keypair_guard = state.keypair.lock().await;
+    *keypair_guard = Some(keypair.clone());
+    drop(keypair_guard);
+
+    // Create handler and sign in to get profile name
+    let handler = state.create_handler_and_sign_in().await?
+        .ok_or("Failed to create handler")?;
+
     let profile_name = task::spawn_blocking(move || -> Result<Option<String>, String> {
-        let handler = PrivateMessageHandler::new(client, keypair_clone);
-
-        // Use a blocking runtime for the async calls
         let rt = tokio::runtime::Handle::current();
-
-        // Sign in first
-        rt.block_on(handler.sign_in())
-            .map_err(|e| format!("Failed to sign in: {}", e))?;
 
         // Get own profile name
         let name = rt.block_on(handler.get_own_profile())
@@ -222,10 +216,6 @@ pub async fn restore_session(
 
         Ok(name)
     }).await.map_err(|e| format!("Task failed: {}", e))??;
-
-    // Store keypair in state
-    let mut keypair_guard = state.keypair.lock().await;
-    *keypair_guard = Some(keypair.clone());
 
     // Store user name in state
     let mut name_guard = state.user_name.lock().await;
@@ -253,29 +243,12 @@ pub async fn send_message(
     println!("   Sender: {}", keypair.public_key().to_string().chars().take(8).collect::<String>());
     println!("   Recipient: {}", recipient_pubkey.chars().take(8).collect::<String>());
 
-    // Get shared client and create handler
-    let client = state.get_or_create_client().await?;
-    let handler = PrivateMessageHandler::new(client, keypair);
+    // Get handler (without signing in since we should already be authenticated)
+    let handler = state.create_handler().await?
+        .ok_or("Not signed in")?;
 
     let recipient = PublicKey::try_from(recipient_pubkey.as_str())
         .map_err(|e| format!("Invalid recipient public key: {}", e))?;
-
-    // Sign in first with detailed logging
-    println!("🔐 Attempting to sign in...");
-    match handler.sign_in().await {
-        Ok(session) => {
-            println!("✅ Sign in successful!");
-            println!("   Session details: {:?}", session);
-        }
-        Err(e) => {
-            println!("❌ Sign in failed: {}", e);
-            return Err(format!("Failed to sign in: {}", e));
-        }
-    }
-
-    // Add a small delay to ensure session is established
-    println!("⏳ Waiting for session to stabilize...");
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
     // Send the message
     println!("📤 Attempting to send message...");
@@ -313,18 +286,14 @@ pub async fn get_conversation(
 
     let current_user = keypair.public_key().to_string();
 
-    let client = state.get_or_create_client().await?;
+    let handler = state.create_handler().await?
+        .ok_or("Not signed in")?;
+    
     let messages = task::spawn_blocking(move || -> Result<Vec<(crate::messaging::PrivateMessage, String, String, bool)>, String> {
-        let handler = PrivateMessageHandler::new(client, keypair);
-
         let other_pk = PublicKey::try_from(other_pubkey.as_str())
             .map_err(|e| format!("Invalid public key: {}", e))?;
 
         let rt = tokio::runtime::Handle::current();
-
-        // Sign in first
-        rt.block_on(handler.sign_in())
-            .map_err(|e| format!("Failed to sign in: {}", e))?;
 
         // Get conversation with decrypted senders
         let raw_messages = rt.block_on(handler.get_messages(&other_pk))
@@ -380,6 +349,9 @@ pub async fn sign_out(state: State<'_, AppState>) -> Result<String, String> {
     let mut name_guard = state.user_name.lock().await;
     *name_guard = None;
 
+    let mut signed_in_guard = state.is_signed_in.lock().await;
+    *signed_in_guard = false;
+
     Ok("Signed out successfully".to_string())
 }
 
@@ -392,15 +364,11 @@ pub async fn scan_followed_users(state: State<'_, AppState>) -> Result<Vec<crate
 
     println!("🔍 Scanning for followed users...");
 
-    let client = state.get_or_create_client().await?;
+    let handler = state.create_handler().await?
+        .ok_or("Not signed in")?;
+    
     let users = task::spawn_blocking(move || -> Result<Vec<crate::messaging::FollowedUser>, String> {
-        let handler = PrivateMessageHandler::new(client, keypair);
-
         let rt = tokio::runtime::Handle::current();
-
-        // Sign in first
-        rt.block_on(handler.sign_in())
-            .map_err(|e| format!("Failed to sign in: {}", e))?;
 
         // Get followed users with profiles
         let users = rt.block_on(handler.get_followed_users_with_profiles())

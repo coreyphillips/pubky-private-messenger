@@ -631,6 +631,7 @@ pub struct AppState {
     pub keypair: Mutex<Option<Keypair>>,
     pub user_name: Mutex<Option<String>>,
     pub client: Mutex<Option<pubky::Client>>,
+    pub is_signed_in: Mutex<bool>,
 }
 
 impl AppState {
@@ -639,6 +640,7 @@ impl AppState {
             keypair: Mutex::new(None),
             user_name: Mutex::new(None),
             client: Mutex::new(None),
+            is_signed_in: Mutex::new(false),
         }
     }
 
@@ -658,7 +660,28 @@ impl AppState {
         }
     }
     
-    // Helper method to create a handler with the shared client
+    // Helper method to create a handler and perform sign_in (for initial authentication)
+    pub async fn create_handler_and_sign_in(&self) -> std::result::Result<Option<PrivateMessageHandler>, String> {
+        let keypair_guard = self.keypair.lock().await;
+        if let Some(keypair) = keypair_guard.as_ref() {
+            let client = self.get_or_create_client().await?;
+            let handler = PrivateMessageHandler::new(client, keypair.clone());
+            
+            // Perform sign_in to establish session with homeserver
+            handler.sign_in().await
+                .map_err(|e| format!("Failed to sign in: {}", e))?;
+            
+            // Mark as signed in
+            let mut signed_in_guard = self.is_signed_in.lock().await;
+            *signed_in_guard = true;
+            
+            Ok(Some(handler))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    // Helper method to create a handler without signing in (when already authenticated)
     pub async fn create_handler(&self) -> std::result::Result<Option<PrivateMessageHandler>, String> {
         let keypair_guard = self.keypair.lock().await;
         if let Some(keypair) = keypair_guard.as_ref() {
