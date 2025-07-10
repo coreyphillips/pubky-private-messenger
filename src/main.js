@@ -7,6 +7,7 @@ let currentContact = null;
 let contacts = new Map();
 let isEditingContactName = false; // Track when editing contact names
 let userSettings = null; // User settings
+let contactSearchFilter = ''; // Track search filter
 
 // Session persistence key
 const SESSION_STORAGE_KEY = 'pubky_session';
@@ -37,6 +38,7 @@ const messagesContainer = document.getElementById('messages-container');
 const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
 const conversationTitle = document.getElementById('conversation-title');
+const searchContactInput = document.getElementById('search-contact');
 
 // Settings elements
 const pollingEnabledToggle = document.getElementById('polling-enabled');
@@ -320,6 +322,8 @@ async function signOut() {
     currentContact = null;
     contacts.clear();
     userSettings = null;
+    contactSearchFilter = '';
+    searchContactInput.value = '';
 
     // Clear caches
     clearMessageCaches();
@@ -335,6 +339,7 @@ async function signOut() {
     sendBtn.disabled = true;
 
     stopMessagePolling();
+    stopActiveConversationPolling();
     console.log('🚪 Signed out and cleared all data including saved session');
   } catch (error) {
     console.error('Sign out error:', error);
@@ -386,6 +391,7 @@ function removeContact(pubkey, event) {
     messagesContainer.innerHTML = '';
     messageInput.disabled = true;
     sendBtn.disabled = true;
+    stopActiveConversationPolling();
   }
 
   renderContacts();
@@ -774,9 +780,27 @@ function saveContacts() {
 function renderContacts() {
   contactsList.innerHTML = '';
 
+  // Filter contacts based on search
+  let filteredContacts = Array.from(contacts.entries());
+  
+  if (contactSearchFilter) {
+    const searchLower = contactSearchFilter.toLowerCase();
+    filteredContacts = filteredContacts.filter(([pubkey, contact]) => {
+      // Search in contact name
+      if (contact.name && contact.name.toLowerCase().includes(searchLower)) {
+        return true;
+      }
+      // Search in public key
+      if (pubkey.toLowerCase().includes(searchLower)) {
+        return true;
+      }
+      return false;
+    });
+  }
+
   // Sort contacts: by unread count (desc), then by last message time (desc)
   // No longer move active contact to top to prevent jumping
-  const sortedContacts = Array.from(contacts.entries()).sort(([pubkeyA, contactA], [pubkeyB, contactB]) => {
+  const sortedContacts = filteredContacts.sort(([pubkeyA, contactA], [pubkeyB, contactB]) => {
     // Sort by unread count (descending)
     if (contactB.unread_count !== contactA.unread_count) {
       return contactB.unread_count - contactA.unread_count;
@@ -785,6 +809,12 @@ function renderContacts() {
     // Then by last message time (descending)
     return (contactB.last_message_time || 0) - (contactA.last_message_time || 0);
   });
+
+  // Show a message if no contacts match the filter
+  if (sortedContacts.length === 0 && contactSearchFilter) {
+    contactsList.innerHTML = '<div class="no-contacts-message">No contacts match your search</div>';
+    return;
+  }
 
   for (const [pubkey, contact] of sortedContacts) {
     const contactEl = document.createElement('div');
@@ -864,6 +894,9 @@ async function selectContact(pubkey) {
 
   // Load conversation history
   await loadConversation(pubkey);
+  
+  // Start active conversation polling for seamless real-time updates
+  startActiveConversationPolling();
 }
 
 // Load conversation
@@ -1008,7 +1041,7 @@ async function sendMessage() {
   if (!currentContact || !messageInput.value.trim()) return;
 
   const messageContent = messageInput.value.trim();
-  messageInput.value = ''; // Clear input immediately for better UX
+  messageInput.value = '';
 
   // Create optimistic message object for immediate display
   const optimisticMessage = {
@@ -1076,6 +1109,7 @@ async function sendMessage() {
 
 // Message polling
 let messagePollingInterval;
+let activeConversationPollingInterval;
 
 function startMessagePolling() {
   // Don't start if polling is disabled in settings
@@ -1148,6 +1182,77 @@ function stopMessagePolling() {
   }
 }
 
+// Active conversation polling (more frequent updates for current chat)
+function startActiveConversationPolling() {
+  stopActiveConversationPolling(); // Clear any existing interval
+  
+  if (!currentContact) {
+    return;
+  }
+  
+  console.log(`⚡ Starting active conversation polling for ${currentContact.substring(0, 8)}...`);
+  
+  // Poll every 2 seconds for active conversation (much more frequent than general polling)
+  activeConversationPollingInterval = setInterval(async () => {
+    if (!currentContact) {
+      stopActiveConversationPolling();
+      return;
+    }
+    
+    try {
+      const messages = await invoke('get_conversation', { otherPubkey: currentContact });
+      
+      if (messages.length > 0) {
+        // Get current cached messages to compare
+        const cachedMessages = loadMessagesCache(currentContact);
+        
+        // Check if we have new messages by comparing lengths or last message
+        const hasNewMessages = !cachedMessages || 
+                             messages.length > cachedMessages.length ||
+                             (messages.length > 0 && cachedMessages.length > 0 && 
+                              messages[messages.length - 1].timestamp !== cachedMessages[cachedMessages.length - 1].timestamp);
+        
+        if (hasNewMessages) {
+          console.log(`📬 New messages detected in active conversation!`);
+          
+          // Save to cache
+          saveMessagesCache(currentContact, messages);
+          
+          // Render messages smoothly, preserving scroll position if at bottom
+          const wasAtBottom = messagesContainer.scrollHeight - messagesContainer.scrollTop <= messagesContainer.clientHeight + 50;
+          renderMessages(messages);
+          
+          if (wasAtBottom) {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+          }
+          
+          // Mark as read since user is viewing
+          markContactAsRead(currentContact);
+          
+          // Update contact's last message info
+          const contact = contacts.get(currentContact);
+          if (contact && messages.length > 0) {
+            const lastMsg = messages[messages.length - 1];
+            contact.last_message = lastMsg.content;
+            contact.last_message_time = lastMsg.timestamp;
+            saveContacts();
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to poll active conversation:', error);
+    }
+  }, 5000); // Poll every 5 seconds for active conversation
+}
+
+function stopActiveConversationPolling() {
+  if (activeConversationPollingInterval) {
+    clearInterval(activeConversationPollingInterval);
+    activeConversationPollingInterval = null;
+    console.log('⚡ Active conversation polling stopped');
+  }
+}
+
 // Utility functions
 function showError(message) {
   loginError.textContent = message;
@@ -1176,6 +1281,13 @@ messageInput.addEventListener('keypress', (e) => {
   if (e.key === 'Enter') {
     sendMessage();
   }
+});
+
+
+// Add search input event listener
+searchContactInput.addEventListener('input', (e) => {
+  contactSearchFilter = e.target.value.trim();
+  renderContacts();
 });
 
 passphraseInput.addEventListener('keypress', (e) => {

@@ -630,6 +630,7 @@ impl PrivateMessageHandler {
 pub struct AppState {
     pub keypair: Mutex<Option<Keypair>>,
     pub user_name: Mutex<Option<String>>,
+    pub client: Mutex<Option<pubky::Client>>,
 }
 
 impl AppState {
@@ -637,15 +638,31 @@ impl AppState {
         Self {
             keypair: Mutex::new(None),
             user_name: Mutex::new(None),
+            client: Mutex::new(None),
         }
     }
 
-    // Helper method to create a client
-    pub async fn create_client_and_handler(&self) -> std::result::Result<Option<PrivateMessageHandler>, String> {
-        let keypair_guard = self.keypair.lock().await;
-        if let Some(keypair) = keypair_guard.as_ref() {
+    // Helper method to get or create a client
+    pub async fn get_or_create_client(&self) -> std::result::Result<pubky::Client, String> {
+        let mut client_guard = self.client.lock().await;
+        
+        if let Some(client) = client_guard.as_ref() {
+            // Return the existing client
+            Ok(client.clone())
+        } else {
+            // Create a new client and store it
             let client = pubky::Client::builder().build()
                 .map_err(|e| format!("Failed to create client: {}", e))?;
+            *client_guard = Some(client.clone());
+            Ok(client)
+        }
+    }
+    
+    // Helper method to create a handler with the shared client
+    pub async fn create_handler(&self) -> std::result::Result<Option<PrivateMessageHandler>, String> {
+        let keypair_guard = self.keypair.lock().await;
+        if let Some(keypair) = keypair_guard.as_ref() {
+            let client = self.get_or_create_client().await?;
             Ok(Some(PrivateMessageHandler::new(client, keypair.clone())))
         } else {
             Ok(None)

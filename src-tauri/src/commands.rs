@@ -5,7 +5,6 @@ use chacha20poly1305::{
     aead::{Aead, AeadCore, KeyInit, OsRng as ChaChaOsRng},
     ChaCha20Poly1305, Nonce
 };
-use digest::Digest;
 use hkdf::Hkdf;
 use pkarr::{Keypair, PublicKey};
 use pubky_common::recovery_file;
@@ -132,13 +131,10 @@ fn decrypt_keypair(encrypted_data: &str) -> Result<Keypair, String> {
 }
 
 #[command]
-pub async fn init_client() -> Result<String, String> {
-    task::spawn_blocking(|| -> Result<String, String> {
-        match pubky::Client::builder().build() {
-            Ok(_) => Ok("Client initialized successfully".to_string()),
-            Err(e) => Err(format!("Failed to initialize client: {}", e)),
-        }
-    }).await.map_err(|e| format!("Task failed: {}", e))?
+pub async fn init_client(state: State<'_, AppState>) -> Result<String, String> {
+    // Initialize the shared client in AppState
+    state.get_or_create_client().await?;
+    Ok("Client initialized successfully".to_string())
 }
 
 #[command]
@@ -160,10 +156,8 @@ pub async fn sign_in_with_recovery(
 
     // Test sign in and get profile name
     let keypair_clone = result.clone();
+    let client = state.get_or_create_client().await?;
     let profile_name = task::spawn_blocking(move || -> Result<Option<String>, String> {
-        let client = pubky::Client::builder().build()
-            .map_err(|e| format!("Failed to create client: {}", e))?;
-
         let handler = PrivateMessageHandler::new(client, keypair_clone);
 
         // Use a blocking runtime for the async calls
@@ -211,10 +205,8 @@ pub async fn restore_session(
 
     // Test sign in and get profile name
     let keypair_clone = keypair.clone();
+    let client = state.get_or_create_client().await?;
     let profile_name = task::spawn_blocking(move || -> Result<Option<String>, String> {
-        let client = pubky::Client::builder().build()
-            .map_err(|e| format!("Failed to create client: {}", e))?;
-
         let handler = PrivateMessageHandler::new(client, keypair_clone);
 
         // Use a blocking runtime for the async calls
@@ -261,10 +253,8 @@ pub async fn send_message(
     println!("   Sender: {}", keypair.public_key().to_string().chars().take(8).collect::<String>());
     println!("   Recipient: {}", recipient_pubkey.chars().take(8).collect::<String>());
 
-    // Create client and handler
-    let client = pubky::Client::builder().build()
-        .map_err(|e| format!("Failed to create client: {}", e))?;
-
+    // Get shared client and create handler
+    let client = state.get_or_create_client().await?;
     let handler = PrivateMessageHandler::new(client, keypair);
 
     let recipient = PublicKey::try_from(recipient_pubkey.as_str())
@@ -323,10 +313,8 @@ pub async fn get_conversation(
 
     let current_user = keypair.public_key().to_string();
 
+    let client = state.get_or_create_client().await?;
     let messages = task::spawn_blocking(move || -> Result<Vec<(crate::messaging::PrivateMessage, String, String, bool)>, String> {
-        let client = pubky::Client::builder().build()
-            .map_err(|e| format!("Failed to create client: {}", e))?;
-
         let handler = PrivateMessageHandler::new(client, keypair);
 
         let other_pk = PublicKey::try_from(other_pubkey.as_str())
@@ -404,10 +392,8 @@ pub async fn scan_followed_users(state: State<'_, AppState>) -> Result<Vec<crate
 
     println!("🔍 Scanning for followed users...");
 
+    let client = state.get_or_create_client().await?;
     let users = task::spawn_blocking(move || -> Result<Vec<crate::messaging::FollowedUser>, String> {
-        let client = pubky::Client::builder().build()
-            .map_err(|e| format!("Failed to create client: {}", e))?;
-
         let handler = PrivateMessageHandler::new(client, keypair);
 
         let rt = tokio::runtime::Handle::current();

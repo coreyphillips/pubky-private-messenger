@@ -181,6 +181,32 @@ body {
     cursor: pointer;
 }
 
+.search-contact {
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid #dee2e6;
+    flex-shrink: 0;
+}
+
+.search-contact input {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: 14px;
+}
+
+.search-contact input:focus {
+    outline: none;
+    border-color: #007bff;
+}
+
+.no-contacts-message {
+    padding: 2rem;
+    text-align: center;
+    color: #6c757d;
+    font-style: italic;
+}
+
 /* Fixed: Make contacts list scrollable */
 #contacts-list {
     flex: 1;
